@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>量化策略监控面板</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; color: #222; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 16px; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 12px; }
+    .card { background: #fff; border-radius: 8px; padding: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    .label { color: #666; font-size: 12px; }
+    .value { font-size: 22px; font-weight: 600; margin-top: 4px; }
+    .layout { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }
+    .panel { background: #fff; border-radius: 8px; padding: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    #priceChart, #indicatorChart { height: 290px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; vertical-align: top; }
+    .row-warn { background: #fffbe6; }
+    .row-error { background: #fff1f0; }
+    .tag { padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+    .tag-info { background: #e6f7ff; color: #0958d9; }
+    .tag-warn { background: #fff7e6; color: #d46b08; }
+    .tag-error { background: #fff1f0; color: #cf1322; }
+    .small { color: #666; font-size: 12px; }
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+    .mono { font-family: Consolas, monospace; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h2>量化策略监控面板</h2>
+      <div class="small">未读告警：<span id="unreadAlerts">0</span> | <span id="updatedAt">--</span></div>
+    </div>
+
+    <div class="cards">
+      <div class="card"><div class="label">余额</div><div class="value" id="balance">--</div></div>
+      <div class="card"><div class="label">权益</div><div class="value" id="equity">--</div></div>
+      <div class="card"><div class="label">可用</div><div class="value" id="available">--</div></div>
+      <div class="card"><div class="label">保证金</div><div class="value" id="margin">--</div></div>
+      <div class="card"><div class="label">浮盈</div><div class="value" id="floatProfit">--</div></div>
+    </div>
+
+    <div class="layout">
+      <div class="panel">
+        <h3>价格与均线</h3>
+        <div id="priceChart"></div>
+        <div class="small">当前持仓：<span id="curPos">--</span> 手 | 全部持仓：<span id="heldSymbols" class="mono">--</span></div>
+      </div>
+      <div class="panel">
+        <h3>指标</h3>
+        <div id="indicatorChart"></div>
+        <div class="small">合约：<span id="symbol">--</span> | 最新价：<span id="close">--</span></div>
+      </div>
+    </div>
+
+    <div class="split">
+      <div class="panel">
+        <h3>告警中心</h3>
+        <table>
+          <thead><tr><th>时间</th><th>级别</th><th>类型</th><th>内容</th><th>操作</th></tr></thead>
+          <tbody id="alertsTable"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h3>事件流</h3>
+        <table>
+          <thead><tr><th>时间</th><th>级别</th><th>事件</th><th>内容</th></tr></thead>
+          <tbody id="eventsTable"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/dashboard/app.js"></script>
+</body>
+</html>
