@@ -12,7 +12,7 @@ log = logging.getLogger(__name__)
 FEISHU_CONFIG = {
     "enabled": True,
     # 飞书群机器人 webhook，在群设置-群机器人-添加自定义机器人 中获取
-    "webhook": "",  # 例如: https://open.feishu.cn/open-apis/bot/v2/hook/xxxxx
+    "webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/d006b985-b71a-4c8e-a505-dcea786053a2",  # 例如: https://open.feishu.cn/open-apis/bot/v2/hook/xxxxx
 }
 
 

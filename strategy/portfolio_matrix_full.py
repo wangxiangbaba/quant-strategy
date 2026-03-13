@@ -2,9 +2,9 @@
 ===============================================================
   10品种跨板块量化矩阵系统 (回测 + 实盘 统一架构版)
   
-  运行方式:
-  - 回测模式: python portfolio_matrix_full.py backtest
-  - 实盘模式: python portfolio_matrix_full.py live
+  运行方式（在 program 目录下）:
+  - 回测模式: python -m strategy.portfolio_matrix_full backtest
+  - 实盘模式: python -m strategy.portfolio_matrix_full live
   
   新增功能:
   1. 接入 TqBacktest，支持多品种并发回测
@@ -79,9 +79,9 @@ PORTFOLIO_CONFIG = {
 }
 
 try:
-    from push_notify import push
-    from push_notify import matrix_start, matrix_close, matrix_status, matrix_long, matrix_short
-    from push_notify import matrix_flat_long, matrix_flat_short, matrix_trade, matrix_fuse, matrix_error
+    from push import push
+    from push import matrix_start, matrix_close, matrix_status, matrix_long, matrix_short
+    from push import matrix_flat_long, matrix_flat_short, matrix_trade, matrix_fuse, matrix_error
 except Exception:
     push = lambda t: None
     matrix_start = lambda b: ""

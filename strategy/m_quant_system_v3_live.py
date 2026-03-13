@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 try:
-    from telegram_notify import telegram_notify
+    from push.telegram_notify import telegram_notify
 except Exception:
     telegram_notify = lambda t: False
 import seaborn as sns

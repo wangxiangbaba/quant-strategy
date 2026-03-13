@@ -1,5 +1,5 @@
 # 敏感配置（含账号密码）
-config_account.py
+conf/config_account.py
 
 # Python
 __pycache__/

@@ -20,7 +20,7 @@
 
 ## 三、配置
 
-编辑 `telegram_notify.py`，填写：
+编辑 `push/telegram_notify.py`，填写：
 
 ```python
 TELEGRAM_CONFIG = {

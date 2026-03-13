@@ -11,8 +11,9 @@ log = logging.getLogger(__name__)
 TELEGRAM_CONFIG = {
     "enabled": True,
     # 在 @BotFather 创建机器人后获取
-    "bot_token": "",   # 需从 @BotFather 获取，机器人: @bear_longquan_bear_bot
+    "bot_token": "8630814901:AAFq-05vRiFZsmT0GPZxFZ851-QcQqGMxCA",   # 需从 @BotFather 获取，机器人: @bear_longquan_bear_bot
     "chat_id": "-1003825270411",  # 熊熊量化基金 群组
+    "proxy": "http://192.168.1.6:8890",   # 代理，访问 Telegram API 用。不用代理可设为 None
 }
 
 

@@ -79,7 +79,7 @@ PORTFOLIO_CONFIG = {
     "init_capital": 500_000.0,
     "bt_start": date(2025, 2, 1),
     "bt_end": date(2025, 3, 1),
-    **__import__("config_account", fromlist=["TQ_ACCOUNT"]).TQ_ACCOUNT,
+    **__import__("conf.config_account", fromlist=["TQ_ACCOUNT"]).TQ_ACCOUNT,
 }
 
 WATERMARK = {"high_watermark": 0.0, "drawdown_limit": 0.05, "base_risk": 0.01, "safe_risk": 0.003}
