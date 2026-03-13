@@ -45,7 +45,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 try:
-    from quant_web_client import QuantWebReporter
+    from clients.quant_web_client import QuantWebReporter
 except Exception:
     QuantWebReporter = None
 

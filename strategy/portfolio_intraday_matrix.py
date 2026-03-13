@@ -336,15 +336,20 @@ def run_portfolio(mode="live", tf_str="60m"):
                     total_lots = sum(p.pos_long + p.pos_short for p in pos_dict.values())
                     symbols_str = " ".join(s.split("@")[-1] if "@" in s else s for s in symbols_to_trade)
                     close_v, ma_s_v, ma_l_v, rsi_v, adx_v = 0.0, 0.0, 0.0, 0.0, 0.0
+                    approach_alerts = []
                     for sym in symbols_to_trade:
                         sig = _compute_indicators((sym, klines_dict[sym], cfg))
                         if sig:
-                            close_v = sig["close_price"]
-                            ma_s_v = sig["ma_short"]
-                            ma_l_v = sig["ma_long"]
-                            rsi_v = sig["rsi_val"]
-                            adx_v = sig["adx_approx"]
-                            break
+                            close_v = sig["close_price"] if close_v == 0 else close_v
+                            ma_s_v = sig["ma_short"] if ma_s_v == 0 else ma_s_v
+                            ma_l_v = sig["ma_long"] if ma_l_v == 0 else ma_l_v
+                            rsi_v = sig["rsi_val"] if rsi_v == 0 else rsi_v
+                            adx_v = sig["adx_approx"] if adx_v == 0 else adx_v
+                            cur_pos = pos_dict[sym].pos_long - pos_dict[sym].pos_short
+                            approach_alerts.append({
+                                "sym": sym, "close": sig["close_price"], "h20": sig["high_20"], "l20": sig["low_20"],
+                                "h10": sig["high_10"], "l10": sig["low_10"], "cur_pos": cur_pos,
+                            })
                     # K线不足时，至少用首个品种的现价
                     if close_v == 0 and symbols_to_trade:
                         q = quote_dict.get(symbols_to_trade[0])
@@ -353,7 +358,8 @@ def run_portfolio(mode="live", tf_str="60m"):
                     push(matrix_status(float(account.balance), float(getattr(account, "available", account.balance)),
                          float(getattr(account, "margin", 0)), float(account.float_profit), equity,
                          float(getattr(account, "close_profit", 0) or 0), equity - DAILY_RISK["start_equity"],
-                         init_equity, positions, symbols_str, total_lots, close_v, ma_s_v, ma_l_v, rsi_v, adx_v, label="2分钟"))
+                         init_equity, positions, symbols_str, total_lots, close_v, ma_s_v, ma_l_v, rsi_v, adx_v,
+                         label="2分钟", approach_alerts=approach_alerts))
                     last_status_push = now
 
             try:
@@ -410,25 +416,27 @@ def run_portfolio(mode="live", tf_str="60m"):
                         if mode == "live":
                             push(matrix_long(sym, lots, cp, sig["ma_short"], sig["ma_long"], sig["rsi_val"],
                                          sig["adx_approx"], equity, float(account.float_profit),
-                                         equity - DAILY_RISK["start_equity"], build_positions_detail(pos_dict, quote_dict)))
+                                         equity - DAILY_RISK["start_equity"], build_positions_detail(pos_dict, quote_dict),
+                                         h20=sig["high_20"], l10=sig["low_10"]))
                     elif cp < l20 and cur_pos >= 0 and trend_ok and not is_melted and is_safe_time and ma_sh:
                         target_pos_dict[sym] = -lots
                         if mode == "live":
                             push(matrix_short(sym, lots, cp, sig["ma_short"], sig["ma_long"], sig["rsi_val"],
                                           sig["adx_approx"], equity, float(account.float_profit),
-                                          equity - DAILY_RISK["start_equity"], build_positions_detail(pos_dict, quote_dict)))
+                                          equity - DAILY_RISK["start_equity"], build_positions_detail(pos_dict, quote_dict),
+                                          l20=sig["low_20"], h10=sig["high_10"]))
                     elif cp < l10 and cur_pos > 0:
                         target_pos_dict[sym] = 0
                         if mode == "live":
                             op = float(getattr(pos_dict[sym], "open_price_long", 0) or 0)
                             rl = (cp - op) * cur_pos * float(getattr(quote_dict[sym], "volume_multiple", 1) or 1)
-                            push(matrix_flat_long(sym, cp, op, cur_pos, rl, equity, equity - DAILY_RISK["start_equity"]))
+                            push(matrix_flat_long(sym, cp, op, cur_pos, rl, equity, equity - DAILY_RISK["start_equity"], l10=sig["low_10"]))
                     elif cp > h10 and cur_pos < 0:
                         target_pos_dict[sym] = 0
                         if mode == "live":
                             op = float(getattr(pos_dict[sym], "open_price_short", 0) or 0)
                             rl = (op - cp) * abs(cur_pos) * float(getattr(quote_dict[sym], "volume_multiple", 1) or 1)
-                            push(matrix_flat_short(sym, cp, op, abs(cur_pos), rl, equity, equity - DAILY_RISK["start_equity"]))
+                            push(matrix_flat_short(sym, cp, op, abs(cur_pos), rl, equity, equity - DAILY_RISK["start_equity"], h10=sig["high_10"]))
 
                 if mode == "backtest":
                     for sym in symbols_to_trade:

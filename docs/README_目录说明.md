@@ -30,6 +30,8 @@ program/
 │   ├── README_目录说明.md
 │   └── Telegram推送配置说明.md
 ├── quant_web/               # Django 看板
+├── clients/                 # 外部服务客户端
+│   └── quant_web_client.py  # 量化看板上报
 └── conf/                    # 配置模块
     ├── config_account.example.py
     └── config_account.py    # 本地配置（不提交）
