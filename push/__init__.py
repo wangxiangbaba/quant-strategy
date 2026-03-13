@@ -4,7 +4,7 @@ from .push_notify import (
     matrix_launched, matrix_start, matrix_open, matrix_close,
     matrix_status, matrix_long, matrix_short,
     matrix_flat_long, matrix_flat_short, matrix_trade,
-    matrix_fuse, matrix_error,
+    matrix_fuse, matrix_symbol_fuse, matrix_error,
 )
 
 try:
@@ -19,5 +19,5 @@ __all__ = [
     "matrix_launched", "matrix_start", "matrix_open", "matrix_close",
     "matrix_status", "matrix_long", "matrix_short",
     "matrix_flat_long", "matrix_flat_short", "matrix_trade",
-    "matrix_fuse", "matrix_error",
+    "matrix_fuse", "matrix_symbol_fuse", "matrix_error",
 ]

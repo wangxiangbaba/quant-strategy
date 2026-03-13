@@ -1,6 +1,6 @@
 """
 ===============================================================
-  10品种跨板块量化矩阵系统 (全周期兼容版: 5m/10m/30m/60m/1d)
+  10品种跨板块量化矩阵系统 (全周期兼容版 + 单品种独立熔断)
 
   运行方式示例（在 program 目录下）:
   - 5分钟线回测:  python -m strategy.portfolio_intraday_matrix backtest 5m
@@ -8,9 +8,9 @@
   - 日线回测:     python -m strategy.portfolio_intraday_matrix backtest 1d
 
   核心升级:
-  1. 动态时间周期映射，参数随周期放大 (防分钟线假突破)
-  2. 信号与执行分离: K线收盘只缓存目标，行情Tick才报单 (消灭休盘报错)
-  3. 拉长K线数据量，保证 MA60/ATR 预热充分
+  1. 【单品种独立熔断】某品种日内亏损超阈值即强平并关小黑屋，其他品种不受影响
+  2. 【Tick级盯市】精准追踪每品种日内盈亏，跨越夜盘与白盘交易日历
+  3. 信号与执行分离: K线收盘只缓存目标，行情Tick才报单
 ===============================================================
 """
 
@@ -58,12 +58,12 @@ TF_PARAMS = {
 
 try:
     from push import push, matrix_launched, matrix_start, matrix_open, matrix_close, matrix_status
-    from push import matrix_long, matrix_short, matrix_flat_long, matrix_flat_short, matrix_trade, matrix_fuse, matrix_error
+    from push import matrix_long, matrix_short, matrix_flat_long, matrix_flat_short, matrix_trade, matrix_fuse, matrix_error, matrix_symbol_fuse
 except Exception:
     push = lambda t: None
     matrix_launched = matrix_start = matrix_open = matrix_close = matrix_status = lambda *a, **k: ""
     matrix_long = matrix_short = matrix_flat_long = matrix_flat_short = matrix_trade = lambda *a, **k: ""
-    matrix_fuse = matrix_error = lambda *a: ""
+    matrix_fuse = matrix_error = matrix_symbol_fuse = lambda *a, **k: ""
 
 PORTFOLIO_CONFIG = {
     "symbols": [
@@ -76,6 +76,7 @@ PORTFOLIO_CONFIG = {
     "use_ma_filter": True,
     "use_parallel": True,
     "max_workers": 8,
+    "max_daily_loss_per_symbol": 3000.0,  # 单品种日内亏损超此值即强平并关小黑屋
     "init_capital": 500_000.0,
     "bt_start": date(2025, 2, 1),
     "bt_end": date(2025, 3, 1),
@@ -83,7 +84,6 @@ PORTFOLIO_CONFIG = {
 }
 
 WATERMARK = {"high_watermark": 0.0, "drawdown_limit": 0.05, "base_risk": 0.01, "safe_risk": 0.003}
-DAILY_RISK = {"date": datetime.now().date(), "start_equity": 0.0, "max_daily_loss": 5000.0, "is_locked": False}
 
 TRADING_WINDOWS = [
     (time(9, 1), time(10, 14)), (time(10, 31), time(11, 29)),
@@ -93,24 +93,6 @@ TRADING_WINDOWS = [
 
 def is_trading_time() -> bool:
     return any(s <= datetime.now().time() <= e for s, e in TRADING_WINDOWS)
-
-
-def check_daily_circuit_breaker(current_equity: float) -> bool:
-    today = datetime.now().date()
-    if today != DAILY_RISK["date"]:
-        DAILY_RISK["date"] = today
-        DAILY_RISK["start_equity"] = current_equity
-        DAILY_RISK["is_locked"] = False
-        return False
-    if DAILY_RISK["start_equity"] == 0:
-        DAILY_RISK["start_equity"] = current_equity
-    daily_pnl = current_equity - DAILY_RISK["start_equity"]
-    if daily_pnl < -DAILY_RISK["max_daily_loss"] and not DAILY_RISK["is_locked"]:
-        DAILY_RISK["is_locked"] = True
-        push(matrix_fuse(-daily_pnl))
-        log.warning(f"日内熔断: 今日亏损 {daily_pnl:,.0f}")
-        return True
-    return DAILY_RISK["is_locked"]
 
 
 def get_dynamic_risk(current_equity: float) -> float:
@@ -280,6 +262,11 @@ def run_portfolio(mode="live", tf_str="60m"):
         target_pos_dict[sym] = 0
         last_insert_target[sym] = None
 
+    # 单品种独立熔断：每品种独立记账，亏损达标即强平并关小黑屋
+    daily_risk_tracker = {"trade_date": None, "daily_start_equity": 0.0, "symbols": {}}
+    for sym in symbols_to_trade:
+        daily_risk_tracker["symbols"][sym] = {"daily_pnl": 0.0, "locked": False, "last_pos": 0, "last_price": 0.0}
+
     if not symbols_to_trade:
         raise RuntimeError("无可用交易品种")
 
@@ -307,8 +294,6 @@ def run_portfolio(mode="live", tf_str="60m"):
 
     if mode == "live":
         init_equity = float(account.balance)
-        DAILY_RISK["start_equity"] = init_equity
-        DAILY_RISK["date"] = datetime.now().date()
         _msg = matrix_start(init_equity, init_equity)
         push(_msg)
         log.info(f"已推送启动通知: {_msg[:80]}...")
@@ -321,6 +306,45 @@ def run_portfolio(mode="live", tf_str="60m"):
                 api.wait_update()
             now = datetime.now()
             equity = account.balance + account.float_profit
+
+            # 单品种熔断：交易日历对齐（国内期货 21:00 夜盘+次日白盘 为同一交易日）
+            current_trade_date = (now - timedelta(hours=17)).date()
+            if current_trade_date != daily_risk_tracker["trade_date"]:
+                daily_risk_tracker["trade_date"] = current_trade_date
+                daily_risk_tracker["daily_start_equity"] = equity
+                if mode == "live":
+                    log.info(f"🌅 跨越结算线，各品种日内熔断额度重置 (归属日: {current_trade_date})")
+                for sym in symbols_to_trade:
+                    daily_risk_tracker["symbols"][sym]["daily_pnl"] = 0.0
+                    daily_risk_tracker["symbols"][sym]["locked"] = False
+                    q = quote_dict.get(sym)
+                    daily_risk_tracker["symbols"][sym]["last_price"] = float(getattr(q, "last_price", 0) or 0)
+                    daily_risk_tracker["symbols"][sym]["last_pos"] = pos_dict[sym].pos_long - pos_dict[sym].pos_short
+
+            # 单品种 Tick 级盈亏追踪与熔断（仅实盘）
+            if mode == "live":
+                for sym in symbols_to_trade:
+                    q = quote_dict.get(sym)
+                    curr_price = float(getattr(q, "last_price", 0) or 0)
+                    if curr_price <= 0:
+                        continue
+                    curr_pos = pos_dict[sym].pos_long - pos_dict[sym].pos_short
+                    mult = float(getattr(q, "volume_multiple", 1) or 1)
+                    last_price = daily_risk_tracker["symbols"][sym]["last_price"]
+                    last_pos = daily_risk_tracker["symbols"][sym]["last_pos"]
+                    if last_price > 0 and last_pos != 0:
+                        delta_pnl = (curr_price - last_price) * last_pos * mult
+                        daily_risk_tracker["symbols"][sym]["daily_pnl"] += delta_pnl
+                    daily_risk_tracker["symbols"][sym]["last_price"] = curr_price
+                    daily_risk_tracker["symbols"][sym]["last_pos"] = curr_pos
+                    # 单品种熔断：亏损超阈值即强平并关小黑屋
+                    if daily_risk_tracker["symbols"][sym]["daily_pnl"] < -cfg["max_daily_loss_per_symbol"]:
+                        if not daily_risk_tracker["symbols"][sym]["locked"]:
+                            daily_risk_tracker["symbols"][sym]["locked"] = True
+                            target_pos_dict[sym] = 0
+                            loss_val = -daily_risk_tracker["symbols"][sym]["daily_pnl"]
+                            push(matrix_symbol_fuse(sym, loss_val))
+                            log.warning(f"🔴 单品种跳闸: {sym} 今日亏损 ¥{loss_val:,.0f}，已强平并关小黑屋")
 
             if mode == "live":
                 is_open = is_trading_time()
@@ -357,7 +381,7 @@ def run_portfolio(mode="live", tf_str="60m"):
                             close_v = float(getattr(q, "last_price", 0) or 0)
                     push(matrix_status(float(account.balance), float(getattr(account, "available", account.balance)),
                          float(getattr(account, "margin", 0)), float(account.float_profit), equity,
-                         float(getattr(account, "close_profit", 0) or 0), equity - DAILY_RISK["start_equity"],
+                         float(getattr(account, "close_profit", 0) or 0), equity - daily_risk_tracker["daily_start_equity"],
                          init_equity, positions, symbols_str, total_lots, close_v, ma_s_v, ma_l_v, rsi_v, adx_v,
                          label="2分钟", approach_alerts=approach_alerts))
                     last_status_push = now
@@ -380,12 +404,11 @@ def run_portfolio(mode="live", tf_str="60m"):
             except Exception as e:
                 log.debug(f"成交回报检查: {e}")
 
+            current_risk_ratio = get_dynamic_risk(equity)
+
             if any(api.is_changing(klines_dict[sym].iloc[-1], "datetime") for sym in cfg["symbols"] if len(klines_dict[sym]) >= 2):
-                equity = account.balance + account.float_profit
                 if mode == "backtest":
                     equity_curve.append(equity)
-                is_melted = False if mode == "backtest" else check_daily_circuit_breaker(equity)
-                current_risk_ratio = get_dynamic_risk(equity)
                 is_safe_time = is_safe_entry_time(mode)
 
                 if executor:
@@ -397,6 +420,9 @@ def run_portfolio(mode="live", tf_str="60m"):
                     sig_list = [(s, r) for s, r in sig_list if r]
 
                 for sym, sig in sig_list:
+                    # 单品种熔断：该品种已关小黑屋，跳过所有开仓信号
+                    if mode == "live" and daily_risk_tracker["symbols"][sym]["locked"]:
+                        continue
                     cur_pos = pos_dict[sym].pos_long - pos_dict[sym].pos_short
                     mult = quote_dict[sym].volume_multiple
                     min_vol = min_vol_dict.get(sym, 1)
@@ -411,32 +437,32 @@ def run_portfolio(mode="live", tf_str="60m"):
                     cp, h20, l20, h10, l10 = sig["close_price"], sig["high_20"], sig["low_20"], sig["high_10"], sig["low_10"]
                     ma_lo, ma_sh = sig["ma_long_ok"], sig["ma_short_ok"]
 
-                    if cp > h20 and cur_pos <= 0 and trend_ok and not is_melted and is_safe_time and ma_lo:
+                    if cp > h20 and cur_pos <= 0 and trend_ok and is_safe_time and ma_lo:
                         target_pos_dict[sym] = lots
                         if mode == "live":
                             push(matrix_long(sym, lots, cp, sig["ma_short"], sig["ma_long"], sig["rsi_val"],
                                          sig["adx_approx"], equity, float(account.float_profit),
-                                         equity - DAILY_RISK["start_equity"], build_positions_detail(pos_dict, quote_dict),
+                                         equity - daily_risk_tracker["daily_start_equity"], build_positions_detail(pos_dict, quote_dict),
                                          h20=sig["high_20"], l10=sig["low_10"]))
-                    elif cp < l20 and cur_pos >= 0 and trend_ok and not is_melted and is_safe_time and ma_sh:
+                    elif cp < l20 and cur_pos >= 0 and trend_ok and is_safe_time and ma_sh:
                         target_pos_dict[sym] = -lots
                         if mode == "live":
                             push(matrix_short(sym, lots, cp, sig["ma_short"], sig["ma_long"], sig["rsi_val"],
                                           sig["adx_approx"], equity, float(account.float_profit),
-                                          equity - DAILY_RISK["start_equity"], build_positions_detail(pos_dict, quote_dict),
+                                          equity - daily_risk_tracker["daily_start_equity"], build_positions_detail(pos_dict, quote_dict),
                                           l20=sig["low_20"], h10=sig["high_10"]))
                     elif cp < l10 and cur_pos > 0:
                         target_pos_dict[sym] = 0
                         if mode == "live":
                             op = float(getattr(pos_dict[sym], "open_price_long", 0) or 0)
                             rl = (cp - op) * cur_pos * float(getattr(quote_dict[sym], "volume_multiple", 1) or 1)
-                            push(matrix_flat_long(sym, cp, op, cur_pos, rl, equity, equity - DAILY_RISK["start_equity"], l10=sig["low_10"]))
+                            push(matrix_flat_long(sym, cp, op, cur_pos, rl, equity, equity - daily_risk_tracker["daily_start_equity"], l10=sig["low_10"]))
                     elif cp > h10 and cur_pos < 0:
                         target_pos_dict[sym] = 0
                         if mode == "live":
                             op = float(getattr(pos_dict[sym], "open_price_short", 0) or 0)
                             rl = (op - cp) * abs(cur_pos) * float(getattr(quote_dict[sym], "volume_multiple", 1) or 1)
-                            push(matrix_flat_short(sym, cp, op, abs(cur_pos), rl, equity, equity - DAILY_RISK["start_equity"], h10=sig["high_10"]))
+                            push(matrix_flat_short(sym, cp, op, abs(cur_pos), rl, equity, equity - daily_risk_tracker["daily_start_equity"], h10=sig["high_10"]))
 
                 if mode == "backtest":
                     for sym in symbols_to_trade:
@@ -465,10 +491,11 @@ def run_portfolio(mode="live", tf_str="60m"):
                 for sym in symbols_to_trade:
                     if not api.is_changing(quote_tick_dict[sym], "datetime"):
                         continue
-                    if not is_safe_entry_time(mode):
-                        continue
                     cur_real = pos_dict[sym].pos_long - pos_dict[sym].pos_short
                     target = target_pos_dict[sym]
+                    # 【风控修复3】平仓(target==0)不受安全时段限制，开仓才检查
+                    if target != 0 and not is_safe_entry_time(mode):
+                        continue
                     if cur_real == target:
                         last_insert_target[sym] = None
                         continue

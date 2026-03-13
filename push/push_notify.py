@@ -290,5 +290,15 @@ def matrix_fuse(daily_loss: float) -> str:
     )
 
 
+def matrix_symbol_fuse(sym: str, daily_loss: float) -> str:
+    """单品种独立熔断：该品种今日亏损超阈值，已强平并关小黑屋，其他品种不受影响"""
+    return (
+        f"【矩阵策略】🔴 单品种跳闸\n"
+        f"北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n"
+        f"品种: {_sym_display(sym)} 今日亏损: ¥{daily_loss:,.0f}\n"
+        f"已强平并关小黑屋，其他品种不受影响"
+    )
+
+
 def matrix_error(err: str) -> str:
     return f"【矩阵策略】程序异常退出\n北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n错误: {err}\n将在 10 秒后自动重启..."
