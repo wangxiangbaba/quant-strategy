@@ -1,0 +1,23 @@
+# 敏感配置（含账号密码）
+config_account.py
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# 日志与结果
+logs/
+results/
+*.log
+
+# IDE
+.idea/
+.vscode/
+
+# 系统
+.DS_Store
+Thumbs.db
