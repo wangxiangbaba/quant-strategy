@@ -21,6 +21,14 @@ def _beijing_now() -> str:
 # 矩阵策略交易时段（北京时间）
 TRADING_HOURS_STR = "09:01-10:14  10:31-11:29  13:31-14:55  21:01-22:55"
 
+
+def _fmt_strategy_mode(tf_str: str = "", strategy_type: str = "") -> str:
+    """策略模式行：周期 + 引擎类型"""
+    if not tf_str and not strategy_type:
+        return ""
+    engine = "均值回归" if strategy_type == "mr" else ("趋势突破" if strategy_type == "trend" else "")
+    return f"策略模式: {tf_str} {engine}\n" if tf_str or engine else ""
+
 SYMBOL_CN_NAMES = {
     "FG": "玻璃", "SA": "纯碱", "CF": "棉花", "UR": "尿素",
     "y": "豆油", "p": "棕榈油", "m": "豆粕",
@@ -90,27 +98,27 @@ def push(text: str) -> None:
     wechat_ferry_notify(text)
 
 
-def matrix_launched(tf_str: str = "") -> str:
-    s = f"【矩阵策略】程序已启动\n北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}"
+def matrix_launched(tf_str: str = "", strategy_type: str = "") -> str:
+    s = f"【矩阵策略】程序已启动\n{_fmt_strategy_mode(tf_str, strategy_type)}北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}"
     if tf_str:
         s += f"\n周期: {tf_str}\n正在连接交易账户..."
     return s
 
 
-def matrix_start(balance: float, init_capital: float = None) -> str:
-    s = f"【矩阵策略】🚀 系统启动\n模式: 实盘\n权益: ¥{balance:,.0f}\n"
+def matrix_start(balance: float, init_capital: float = None, tf_str: str = "", strategy_type: str = "") -> str:
+    s = f"【矩阵策略】🚀 系统启动\n{_fmt_strategy_mode(tf_str, strategy_type)}模式: 实盘\n权益: ¥{balance:,.0f}\n"
     if init_capital is not None:
         s += f"初始资金: ¥{init_capital:,.0f}\n"
     s += f"北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}"
     return s
 
 
-def matrix_open(now_str: str) -> str:
-    return f"【矩阵策略】开盘\n北京时间: {now_str}\n交易时段: {TRADING_HOURS_STR}"
+def matrix_open(now_str: str, tf_str: str = "", strategy_type: str = "") -> str:
+    return f"【矩阵策略】开盘\n{_fmt_strategy_mode(tf_str, strategy_type)}北京时间: {now_str}\n交易时段: {TRADING_HOURS_STR}"
 
 
-def matrix_close(now_str: str) -> str:
-    return f"【矩阵策略】休市开始\n北京时间: {now_str}\n交易时段: {TRADING_HOURS_STR}"
+def matrix_close(now_str: str, tf_str: str = "", strategy_type: str = "") -> str:
+    return f"【矩阵策略】休市开始\n{_fmt_strategy_mode(tf_str, strategy_type)}北京时间: {now_str}\n交易时段: {TRADING_HOURS_STR}"
 
 
 def _fmt_positions_detail(positions: list) -> str:
@@ -169,7 +177,7 @@ def matrix_status(balance: float, available: float, margin: float, float_profit:
                   equity: float, close_profit: float, daily_pnl: float, init_equity: float,
                   positions: list, symbols_str: str, total_lots: int,
                   close: float, ma_s: float, ma_l: float, rsi: float, adx: float,
-                  label: str = "5分钟", approach_alerts: list = None) -> str:
+                  label: str = "5分钟", approach_alerts: list = None, tf_str: str = "", strategy_type: str = "") -> str:
     pos_detail = _fmt_positions_detail(positions)
     daily_str = f"+{daily_pnl:,.0f}" if daily_pnl >= 0 else f"{daily_pnl:,.0f}"
     close_str = f"+{close_profit:,.0f}" if close_profit >= 0 else f"{close_profit:,.0f}"
@@ -179,7 +187,7 @@ def matrix_status(balance: float, available: float, margin: float, float_profit:
     approach_block = _fmt_approach_alerts(approach_alerts or [])
     return (
         f"【矩阵策略】账户状态更新（{label}）\n"
-        f"北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n"
+        f"{_fmt_strategy_mode(tf_str, strategy_type)}北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n"
         f"品种: {symbols_disp}\n"
         f"─────────────────────\n"
         f"余额: ¥{balance:,.0f}  |  可用: ¥{available:,.0f}  |  保证金: ¥{margin:,.0f}\n"
@@ -196,12 +204,12 @@ def matrix_status(balance: float, available: float, margin: float, float_profit:
 def matrix_long(sym: str, lots: int, price: float, ma_s: float, ma_l: float,
                 rsi: float, adx: float, equity: float, float_profit: float,
                 daily_pnl: float, positions: list,
-                h20: float = None, l10: float = None) -> str:
+                h20: float = None, l10: float = None, tf_str: str = "", strategy_type: str = "") -> str:
     pos_detail = _fmt_positions_detail(positions)
     daily_str = f"+{daily_pnl:,.0f}" if daily_pnl >= 0 else f"{daily_pnl:,.0f}"
     s = (
         f"【矩阵策略】📈 开多\n"
-        f"北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n"
+        f"{_fmt_strategy_mode(tf_str, strategy_type)}北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n"
         f"合约: {_sym_display(sym)} | {lots} 手 | 成交价: {price:.1f}\n"
         f"MA短: {ma_s:.1f} MA长: {ma_l:.1f} RSI: {rsi:.1f} ADX: {adx:.1f}\n"
     )
@@ -217,12 +225,12 @@ def matrix_long(sym: str, lots: int, price: float, ma_s: float, ma_l: float,
 def matrix_short(sym: str, lots: int, price: float, ma_s: float, ma_l: float,
                  rsi: float, adx: float, equity: float, float_profit: float,
                  daily_pnl: float, positions: list,
-                 l20: float = None, h10: float = None) -> str:
+                 l20: float = None, h10: float = None, tf_str: str = "", strategy_type: str = "") -> str:
     pos_detail = _fmt_positions_detail(positions)
     daily_str = f"+{daily_pnl:,.0f}" if daily_pnl >= 0 else f"{daily_pnl:,.0f}"
     s = (
         f"【矩阵策略】📉 开空\n"
-        f"北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n"
+        f"{_fmt_strategy_mode(tf_str, strategy_type)}北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n"
         f"合约: {_sym_display(sym)} | {lots} 手 | 成交价: {price:.1f}\n"
         f"MA短: {ma_s:.1f} MA长: {ma_l:.1f} RSI: {rsi:.1f} ADX: {adx:.1f}\n"
     )
@@ -237,12 +245,12 @@ def matrix_short(sym: str, lots: int, price: float, ma_s: float, ma_l: float,
 
 def matrix_flat_long(sym: str, price: float, open_price: float, lots: int,
                     realized_pnl: float, equity: float, daily_pnl: float,
-                    l10: float = None) -> str:
+                    l10: float = None, tf_str: str = "", strategy_type: str = "") -> str:
     pnl_str = f"+{realized_pnl:,.0f}" if realized_pnl >= 0 else f"{realized_pnl:,.0f}"
     daily_str = f"+{daily_pnl:,.0f}" if daily_pnl >= 0 else f"{daily_pnl:,.0f}"
     s = (
         f"【矩阵策略】🛑 平多\n"
-        f"北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n"
+        f"{_fmt_strategy_mode(tf_str, strategy_type)}北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n"
         f"合约: {_sym_display(sym)} | {lots} 手\n"
         f"开仓均价: {open_price:.1f} → 平仓价: {price:.1f}\n"
     )
@@ -254,12 +262,12 @@ def matrix_flat_long(sym: str, price: float, open_price: float, lots: int,
 
 def matrix_flat_short(sym: str, price: float, open_price: float, lots: int,
                      realized_pnl: float, equity: float, daily_pnl: float,
-                     h10: float = None) -> str:
+                     h10: float = None, tf_str: str = "", strategy_type: str = "") -> str:
     pnl_str = f"+{realized_pnl:,.0f}" if realized_pnl >= 0 else f"{realized_pnl:,.0f}"
     daily_str = f"+{daily_pnl:,.0f}" if daily_pnl >= 0 else f"{daily_pnl:,.0f}"
     s = (
         f"【矩阵策略】🛑 平空\n"
-        f"北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n"
+        f"{_fmt_strategy_mode(tf_str, strategy_type)}北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n"
         f"合约: {_sym_display(sym)} | {lots} 手\n"
         f"开仓均价: {open_price:.1f} → 平仓价: {price:.1f}\n"
     )
@@ -269,12 +277,13 @@ def matrix_flat_short(sym: str, price: float, open_price: float, lots: int,
     return s
 
 
-def matrix_trade(contract: str, direction: str, offset: str, lots: int, price: float) -> str:
+def matrix_trade(contract: str, direction: str, offset: str, lots: int, price: float,
+                 tf_str: str = "", strategy_type: str = "") -> str:
     dir_cn = "买" if direction.upper() == "BUY" else "卖"
     offset_cn = "开仓" if offset.upper() == "OPEN" else "平仓"
     return (
         f"【矩阵策略】成交通知\n"
-        f"北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n"
+        f"{_fmt_strategy_mode(tf_str, strategy_type)}北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n"
         f"合约: {_sym_display(contract)}\n"
         f"开平: {offset_cn} | 方向: {dir_cn}\n"
         f"手数: {lots} | 价格: {price:.1f}"
@@ -290,15 +299,16 @@ def matrix_fuse(daily_loss: float) -> str:
     )
 
 
-def matrix_symbol_fuse(sym: str, daily_loss: float) -> str:
-    """单品种独立熔断：该品种今日亏损超阈值，已强平并关小黑屋，其他品种不受影响"""
+def matrix_symbol_fuse(sym: str, loss_val: float, tf_str: str = "", strategy_type: str = "") -> str:
+    """单品种熔断专属推送"""
     return (
         f"【矩阵策略】🔴 单品种跳闸\n"
-        f"北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n"
-        f"品种: {_sym_display(sym)} 今日亏损: ¥{daily_loss:,.0f}\n"
-        f"已强平并关小黑屋，其他品种不受影响"
+        f"{_fmt_strategy_mode(tf_str, strategy_type)}北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n"
+        f"合约: {_sym_display(sym)}\n"
+        f"今日该品种已亏损: ¥{loss_val:,.0f}\n"
+        f"已执行强平，并冻结该品种新开仓权限直至下一交易日。"
     )
 
 
-def matrix_error(err: str) -> str:
-    return f"【矩阵策略】程序异常退出\n北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n错误: {err}\n将在 10 秒后自动重启..."
+def matrix_error(err: str, tf_str: str = "", strategy_type: str = "") -> str:
+    return f"【矩阵策略】程序异常退出\n{_fmt_strategy_mode(tf_str, strategy_type)}北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n错误: {err}\n将在 10 秒后自动重启..."

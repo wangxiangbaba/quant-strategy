@@ -1,16 +1,15 @@
 """
 ===============================================================
-  10品种跨板块量化矩阵系统 (全周期兼容版 + 单品种独立熔断)
+  10品种跨板块量化矩阵系统 (双核引擎: 趋势 + 均值回归)
 
   运行方式示例（在 program 目录下）:
-  - 5分钟线回测:  python -m strategy.portfolio_intraday_matrix backtest 5m
-  - 60分钟线实盘: python -m strategy.portfolio_intraday_matrix live 60m
-  - 日线回测:     python -m strategy.portfolio_intraday_matrix backtest 1d
+  - 5分钟线(均值回归):  python -m strategy.portfolio_intraday_matrix backtest 5m
+  - 60分钟线(趋势突破): python -m strategy.portfolio_intraday_matrix live 60m
 
   核心升级:
-  1. 【单品种独立熔断】某品种日内亏损超阈值即强平并关小黑屋，其他品种不受影响
-  2. 【Tick级盯市】精准追踪每品种日内盈亏，跨越夜盘与白盘交易日历
-  3. 信号与执行分离: K线收盘只缓存目标，行情Tick才报单
+  1. 【双核引擎】5m/10m/30m 跑布林带均值回归；60m/1d 跑唐奇安趋势突破
+  2. 【防接飞刀】均值回归中 ADX 过滤，避免单边暴涨/暴跌时逆势开仓
+  3. 【单品种独立熔断】Tick 级盯市，亏损达标即强平并关小黑屋
 ===============================================================
 """
 
@@ -48,12 +47,18 @@ TIMEFRAME_MAP = {
     "1d": 24 * 60 * 60,
 }
 
+# MR: 均值回归参数 | Trend: 趋势突破参数
 TF_PARAMS = {
-    "5m": {"donchian_entry": 120, "donchian_exit": 60, "ma_short_period": 120, "ma_long_period": 240, "data_length": 500},
-    "10m": {"donchian_entry": 72, "donchian_exit": 36, "ma_short_period": 72, "ma_long_period": 144, "data_length": 400},
-    "30m": {"donchian_entry": 40, "donchian_exit": 20, "ma_short_period": 40, "ma_long_period": 120, "data_length": 300},
-    "60m": {"donchian_entry": 20, "donchian_exit": 10, "ma_short_period": 20, "ma_long_period": 60, "data_length": 250},
-    "1d": {"donchian_entry": 20, "donchian_exit": 10, "ma_short_period": 20, "ma_long_period": 60, "data_length": 200},
+    "5m": {"bb_period": 60, "bb_std": 2.5, "mr_rsi_long": 30, "mr_rsi_short": 70, "mr_adx_max": 25,
+           "donchian_entry": 120, "donchian_exit": 60, "ma_short_period": 120, "ma_long_period": 240, "data_length": 500},
+    "10m": {"bb_period": 40, "bb_std": 2.2, "mr_rsi_long": 30, "mr_rsi_short": 70, "mr_adx_max": 25,
+            "donchian_entry": 72, "donchian_exit": 36, "ma_short_period": 72, "ma_long_period": 144, "data_length": 400},
+    "30m": {"bb_period": 20, "bb_std": 2.0, "mr_rsi_long": 35, "mr_rsi_short": 65, "mr_adx_max": 30,
+            "donchian_entry": 40, "donchian_exit": 20, "ma_short_period": 40, "ma_long_period": 120, "data_length": 300},
+    "60m": {"bb_period": 20, "bb_std": 2.0, "mr_rsi_long": 30, "mr_rsi_short": 70, "mr_adx_max": 25,
+            "donchian_entry": 20, "donchian_exit": 10, "ma_short_period": 20, "ma_long_period": 60, "data_length": 250},
+    "1d": {"bb_period": 20, "bb_std": 2.0, "mr_rsi_long": 30, "mr_rsi_short": 70, "mr_adx_max": 25,
+           "donchian_entry": 20, "donchian_exit": 10, "ma_short_period": 20, "ma_long_period": 60, "data_length": 200},
 }
 
 try:
@@ -76,7 +81,7 @@ PORTFOLIO_CONFIG = {
     "use_ma_filter": True,
     "use_parallel": True,
     "max_workers": 8,
-    "max_daily_loss_per_symbol": 3000.0,  # 单品种日内亏损超此值即强平并关小黑屋
+    "max_daily_loss_per_symbol": 12000.0,  # 单品种日内亏损超此值即强平并关小黑屋
     "init_capital": 500_000.0,
     "bt_start": date(2025, 2, 1),
     "bt_end": date(2025, 3, 1),
@@ -130,7 +135,7 @@ def build_positions_detail(pos_dict: dict, quote_dict: dict) -> list:
     return out
 
 
-def print_and_plot_report(equity_list: list, cfg: dict, tf_str: str):
+def print_and_plot_report(equity_list: list, cfg: dict, tf_str: str, strategy_type: str = "trend"):
     if not equity_list:
         return
     eq = pd.Series(equity_list)
@@ -139,8 +144,9 @@ def print_and_plot_report(equity_list: list, cfg: dict, tf_str: str):
     max_dd = ((eq - roll_max) / roll_max).min()
     daily_ret = eq.pct_change().dropna()
     sharpe = (daily_ret.mean() / daily_ret.std()) * np.sqrt(252) if len(daily_ret) > 0 and daily_ret.std() > 0 else 0
+    engine_name = "均值回归(MR)" if strategy_type == "mr" else "趋势突破(Trend)"
     print("\n" + "=" * 55)
-    print(f" 10品种矩阵 ({tf_str} 级别) - 回测报告")
+    print(f" 10品种矩阵 ({engine_name} | {tf_str}级别) - 回测报告")
     print("=" * 55)
     print(f" 初始资金:   {cfg['init_capital']:,.0f}")
     print(f" 最终权益:   {eq.iloc[-1]:,.2f}")
@@ -149,9 +155,9 @@ def print_and_plot_report(equity_list: list, cfg: dict, tf_str: str):
     print(f" 夏普比率:   {sharpe:.2f}")
     print("=" * 55 + "\n")
     plt.figure(figsize=(12, 6))
-    plt.plot(eq.index, eq.values, color="#2ecc71", lw=2)
+    plt.plot(eq.index, eq.values, color="#9b59b6" if strategy_type == "mr" else "#2ecc71", lw=2)
     plt.axhline(eq.iloc[0], color="gray", ls="--")
-    plt.title(f"Portfolio Equity (Timeframe: {tf_str})", fontsize=14)
+    plt.title(f"Portfolio Equity ({engine_name} | {tf_str})", fontsize=14)
     plt.grid(alpha=0.3)
     plt.savefig(f"portfolio_backtest_{tf_str.replace('/', '_')}.png", dpi=150)
     log.info(f"权益曲线已保存: portfolio_backtest_{tf_str.replace('/', '_')}.png")
@@ -164,7 +170,9 @@ def _compute_indicators(args):
     dx = cfg["donchian_exit"]
     ms = cfg["ma_short_period"]
     ml = cfg["ma_long_period"]
-    max_period = max(de, ml)
+    bb_p = cfg.get("bb_period", 20)
+    bb_std = cfg.get("bb_std", 2.0)
+    max_period = max(de, ml, bb_p)
     if len(kl) < max_period + 6:
         return None
     try:
@@ -174,6 +182,10 @@ def _compute_indicators(args):
         low_10 = float(kl["low"].rolling(dx).min().shift(1).iloc[-2])
         ma_short = float(kl["close"].rolling(ms).mean().iloc[-2])
         ma_long = float(kl["close"].rolling(ml).mean().iloc[-2])
+        bb_mid = float(kl["close"].rolling(bb_p).mean().iloc[-2])
+        bb_dev = max(float(kl["close"].rolling(bb_p).std().iloc[-2] or 0), 1e-9)
+        bb_up = bb_mid + bb_std * bb_dev
+        bb_dn = bb_mid - bb_std * bb_dev
         ma_long_ok = (ma_short > ma_long) if cfg.get("use_ma_filter", True) else True
         ma_short_ok = (ma_short < ma_long) if cfg.get("use_ma_filter", True) else True
         atr_val = float(ATR(kl, 14)["atr"].iloc[-2])
@@ -187,7 +199,8 @@ def _compute_indicators(args):
         close_price = float(kl["close"].iloc[-2])
         return {
             "sym": sym, "high_20": high_20, "low_20": low_20, "high_10": high_10, "low_10": low_10,
-            "ma_short": ma_short, "ma_long": ma_long, "ma_long_ok": ma_long_ok, "ma_short_ok": ma_short_ok,
+            "ma_short": ma_short, "ma_long": ma_long, "bb_mid": bb_mid, "bb_up": bb_up, "bb_dn": bb_dn,
+            "ma_long_ok": ma_long_ok, "ma_short_ok": ma_short_ok,
             "atr_val": atr_val, "adx_approx": adx_approx, "rsi_val": rsi_val, "close_price": close_price,
         }
     except Exception:
@@ -198,16 +211,17 @@ def run_portfolio(mode="live", tf_str="60m"):
     cfg = {**PORTFOLIO_CONFIG, **TF_PARAMS.get(tf_str, TF_PARAMS["60m"])}
     kline_freq = TIMEFRAME_MAP.get(tf_str, 3600)
     data_len = cfg["data_length"]
+    strategy_type = "mr" if tf_str in ["5m", "10m", "30m"] else "trend"
     if mode == "live":
-        # 保证指标计算所需K线（5m需ma_long=240+6=246根），否则价/MA/RSI/ADX全为0
-        min_required = max(cfg.get("donchian_entry", 20), cfg.get("ma_long_period", 60)) + 10
+        min_required = max(cfg.get("donchian_entry", 20), cfg.get("ma_long_period", 60), cfg.get("bb_period", 20)) + 10
         data_len = max(min(data_len, 350), min_required)
 
     if mode == "live":
-        push(matrix_launched(tf_str))
+        engine_name = "均值回归(MR)" if strategy_type == "mr" else "趋势突破(Trend)"
+        push(matrix_launched(tf_str, strategy_type))
 
     if mode == "backtest":
-        log.info(f"初始化回测 | {cfg['bt_start']}~{cfg['bt_end']} | 周期:{tf_str}")
+        log.info(f"初始化回测 | 引擎:{strategy_type.upper()} | {cfg['bt_start']}~{cfg['bt_end']} | 周期:{tf_str}")
         sim = TqSim(init_balance=cfg["init_capital"])
         api = TqApi(account=sim, backtest=TqBacktest(start_dt=cfg["bt_start"], end_dt=cfg["bt_end"]),
                     auth=TqAuth(cfg["phone"], cfg["password"]))
@@ -294,7 +308,7 @@ def run_portfolio(mode="live", tf_str="60m"):
 
     if mode == "live":
         init_equity = float(account.balance)
-        _msg = matrix_start(init_equity, init_equity)
+        _msg = matrix_start(init_equity, init_equity, tf_str=tf_str, strategy_type=strategy_type)
         push(_msg)
         log.info(f"已推送启动通知: {_msg[:80]}...")
 
@@ -343,7 +357,7 @@ def run_portfolio(mode="live", tf_str="60m"):
                             daily_risk_tracker["symbols"][sym]["locked"] = True
                             target_pos_dict[sym] = 0
                             loss_val = -daily_risk_tracker["symbols"][sym]["daily_pnl"]
-                            push(matrix_symbol_fuse(sym, loss_val))
+                            push(matrix_symbol_fuse(sym, loss_val, tf_str=tf_str, strategy_type=strategy_type))
                             log.warning(f"🔴 单品种跳闸: {sym} 今日亏损 ¥{loss_val:,.0f}，已强平并关小黑屋")
 
             if mode == "live":
@@ -351,9 +365,9 @@ def run_portfolio(mode="live", tf_str="60m"):
                 now_str = now.strftime("%Y-%m-%d %H:%M:%S")
                 if is_open != last_open_state:
                     if is_open:
-                        push(matrix_open(now_str))
+                        push(matrix_open(now_str, tf_str=tf_str, strategy_type=strategy_type))
                     else:
-                        push(matrix_close(now_str))
+                        push(matrix_close(now_str, tf_str=tf_str, strategy_type=strategy_type))
                 last_open_state = is_open
                 if (now - last_status_push).total_seconds() >= 120:
                     positions = build_positions_detail(pos_dict, quote_dict)
@@ -370,10 +384,16 @@ def run_portfolio(mode="live", tf_str="60m"):
                             rsi_v = sig["rsi_val"] if rsi_v == 0 else rsi_v
                             adx_v = sig["adx_approx"] if adx_v == 0 else adx_v
                             cur_pos = pos_dict[sym].pos_long - pos_dict[sym].pos_short
-                            approach_alerts.append({
-                                "sym": sym, "close": sig["close_price"], "h20": sig["high_20"], "l20": sig["low_20"],
-                                "h10": sig["high_10"], "l10": sig["low_10"], "cur_pos": cur_pos,
-                            })
+                            if strategy_type == "mr":
+                                approach_alerts.append({
+                                    "sym": sym, "close": sig["close_price"], "h20": sig["bb_dn"], "l20": sig["bb_up"],
+                                    "h10": sig["bb_mid"], "l10": sig["bb_mid"], "cur_pos": cur_pos,
+                                })
+                            else:
+                                approach_alerts.append({
+                                    "sym": sym, "close": sig["close_price"], "h20": sig["high_20"], "l20": sig["low_20"],
+                                    "h10": sig["high_10"], "l10": sig["low_10"], "cur_pos": cur_pos,
+                                })
                     # K线不足时，至少用首个品种的现价
                     if close_v == 0 and symbols_to_trade:
                         q = quote_dict.get(symbols_to_trade[0])
@@ -383,7 +403,7 @@ def run_portfolio(mode="live", tf_str="60m"):
                          float(getattr(account, "margin", 0)), float(account.float_profit), equity,
                          float(getattr(account, "close_profit", 0) or 0), equity - daily_risk_tracker["daily_start_equity"],
                          init_equity, positions, symbols_str, total_lots, close_v, ma_s_v, ma_l_v, rsi_v, adx_v,
-                         label="2分钟", approach_alerts=approach_alerts))
+                         label="2分钟", approach_alerts=approach_alerts, tf_str=tf_str, strategy_type=strategy_type))
                     last_status_push = now
 
             try:
@@ -399,7 +419,7 @@ def run_portfolio(mode="live", tf_str="60m"):
                         vol = int(getattr(t, "volume", 0) or 0)
                         price = float(getattr(t, "price", 0) or 0)
                         if vol > 0 and inst:
-                            push(matrix_trade(inst, direction, offset, vol, price))
+                            push(matrix_trade(inst, direction, offset, vol, price, tf_str=tf_str, strategy_type=strategy_type))
                             log.info(f"成交推送: {inst} {direction} {offset} {vol}手 @{price}")
             except Exception as e:
                 log.debug(f"成交回报检查: {e}")
@@ -420,11 +440,10 @@ def run_portfolio(mode="live", tf_str="60m"):
                     sig_list = [(s, r) for s, r in sig_list if r]
 
                 for sym, sig in sig_list:
-                    # 单品种熔断：该品种已关小黑屋，跳过所有开仓信号
                     if mode == "live" and daily_risk_tracker["symbols"][sym]["locked"]:
                         continue
                     cur_pos = pos_dict[sym].pos_long - pos_dict[sym].pos_short
-                    mult = quote_dict[sym].volume_multiple
+                    mult = float(getattr(quote_dict[sym], "volume_multiple", 1) or 1)
                     min_vol = min_vol_dict.get(sym, 1)
                     atr_val = sig["atr_val"]
                     if atr_val > 0 and mult > 0:
@@ -433,36 +452,79 @@ def run_portfolio(mode="live", tf_str="60m"):
                         lots = max(min_vol, int(np.floor(raw / min_vol)) * min_vol)
                     else:
                         lots = min_vol
-                    trend_ok = sig["adx_approx"] > cfg["adx_threshold"]
-                    cp, h20, l20, h10, l10 = sig["close_price"], sig["high_20"], sig["low_20"], sig["high_10"], sig["low_10"]
-                    ma_lo, ma_sh = sig["ma_long_ok"], sig["ma_short_ok"]
+                    cp = sig["close_price"]
+                    daily_pnl = equity - daily_risk_tracker["daily_start_equity"]
 
-                    if cp > h20 and cur_pos <= 0 and trend_ok and is_safe_time and ma_lo:
-                        target_pos_dict[sym] = lots
-                        if mode == "live":
-                            push(matrix_long(sym, lots, cp, sig["ma_short"], sig["ma_long"], sig["rsi_val"],
-                                         sig["adx_approx"], equity, float(account.float_profit),
-                                         equity - daily_risk_tracker["daily_start_equity"], build_positions_detail(pos_dict, quote_dict),
-                                         h20=sig["high_20"], l10=sig["low_10"]))
-                    elif cp < l20 and cur_pos >= 0 and trend_ok and is_safe_time and ma_sh:
-                        target_pos_dict[sym] = -lots
-                        if mode == "live":
-                            push(matrix_short(sym, lots, cp, sig["ma_short"], sig["ma_long"], sig["rsi_val"],
-                                          sig["adx_approx"], equity, float(account.float_profit),
-                                          equity - daily_risk_tracker["daily_start_equity"], build_positions_detail(pos_dict, quote_dict),
-                                          l20=sig["low_20"], h10=sig["high_10"]))
-                    elif cp < l10 and cur_pos > 0:
-                        target_pos_dict[sym] = 0
-                        if mode == "live":
-                            op = float(getattr(pos_dict[sym], "open_price_long", 0) or 0)
-                            rl = (cp - op) * cur_pos * float(getattr(quote_dict[sym], "volume_multiple", 1) or 1)
-                            push(matrix_flat_long(sym, cp, op, cur_pos, rl, equity, equity - daily_risk_tracker["daily_start_equity"], l10=sig["low_10"]))
-                    elif cp > h10 and cur_pos < 0:
-                        target_pos_dict[sym] = 0
-                        if mode == "live":
-                            op = float(getattr(pos_dict[sym], "open_price_short", 0) or 0)
-                            rl = (op - cp) * abs(cur_pos) * float(getattr(quote_dict[sym], "volume_multiple", 1) or 1)
-                            push(matrix_flat_short(sym, cp, op, abs(cur_pos), rl, equity, equity - daily_risk_tracker["daily_start_equity"], h10=sig["high_10"]))
+                    if strategy_type == "trend":
+                        # =================【趋势突破引擎】60m/1d =================
+                        trend_ok = sig["adx_approx"] > cfg["adx_threshold"]
+                        h20, l20, h10, l10 = sig["high_20"], sig["low_20"], sig["high_10"], sig["low_10"]
+                        ma_lo, ma_sh = sig["ma_long_ok"], sig["ma_short_ok"]
+                        if cp > h20 and cur_pos <= 0 and trend_ok and is_safe_time and ma_lo:
+                            target_pos_dict[sym] = lots
+                            if mode == "live":
+                                push(matrix_long(sym, lots, cp, sig["ma_short"], sig["ma_long"], sig["rsi_val"],
+                                             sig["adx_approx"], equity, float(account.float_profit), daily_pnl,
+                                             build_positions_detail(pos_dict, quote_dict), h20=h20, l10=l10,
+                                             tf_str=tf_str, strategy_type=strategy_type))
+                        elif cp < l20 and cur_pos >= 0 and trend_ok and is_safe_time and ma_sh:
+                            target_pos_dict[sym] = -lots
+                            if mode == "live":
+                                push(matrix_short(sym, lots, cp, sig["ma_short"], sig["ma_long"], sig["rsi_val"],
+                                              sig["adx_approx"], equity, float(account.float_profit), daily_pnl,
+                                              build_positions_detail(pos_dict, quote_dict), l20=l20, h10=h10,
+                                              tf_str=tf_str, strategy_type=strategy_type))
+                        elif cp < l10 and cur_pos > 0:
+                            target_pos_dict[sym] = 0
+                            if mode == "live":
+                                op = float(getattr(pos_dict[sym], "open_price_long", 0) or 0)
+                                rl = (cp - op) * cur_pos * mult
+                                push(matrix_flat_long(sym, cp, op, cur_pos, rl, equity, daily_pnl, l10=l10,
+                                                     tf_str=tf_str, strategy_type=strategy_type))
+                        elif cp > h10 and cur_pos < 0:
+                            target_pos_dict[sym] = 0
+                            if mode == "live":
+                                op = float(getattr(pos_dict[sym], "open_price_short", 0) or 0)
+                                rl = (op - cp) * abs(cur_pos) * mult
+                                push(matrix_flat_short(sym, cp, op, abs(cur_pos), rl, equity, daily_pnl, h10=h10,
+                                                      tf_str=tf_str, strategy_type=strategy_type))
+                    else:
+                        # =================【均值回归引擎】5m/10m/30m =================
+                        bb_up, bb_dn, bb_mid = sig["bb_up"], sig["bb_dn"], sig["bb_mid"]
+                        rsi, adx, atr = sig["rsi_val"], sig["adx_approx"], sig["atr_val"]
+                        mr_ok = adx < cfg.get("mr_adx_max", 30)
+                        op_long = float(getattr(pos_dict[sym], "open_price_long", 0) or 0)
+                        op_short = float(getattr(pos_dict[sym], "open_price_short", 0) or 0)
+                        stop_long = cur_pos > 0 and op_long > 0 and cp < (op_long - 3 * atr)
+                        stop_short = cur_pos < 0 and op_short > 0 and cp > (op_short + 3 * atr)
+                        if cur_pos > 0 and (cp >= bb_mid or stop_long):
+                            target_pos_dict[sym] = 0
+                            if mode == "live":
+                                rl = (cp - op_long) * cur_pos * mult
+                                msg = matrix_flat_long(sym, cp, op_long, cur_pos, rl, equity, daily_pnl,
+                                                      tf_str=tf_str, strategy_type=strategy_type)
+                                push(msg.replace("🛑 平多", "🛑 平多[回归中轨/止损]"))
+                        elif cur_pos < 0 and (cp <= bb_mid or stop_short):
+                            target_pos_dict[sym] = 0
+                            if mode == "live":
+                                rl = (op_short - cp) * abs(cur_pos) * mult
+                                msg = matrix_flat_short(sym, cp, op_short, abs(cur_pos), rl, equity, daily_pnl,
+                                                       tf_str=tf_str, strategy_type=strategy_type)
+                                push(msg.replace("🛑 平空", "🛑 平空[回归中轨/止损]"))
+                        elif cp < bb_dn and rsi < cfg.get("mr_rsi_long", 30) and cur_pos <= 0 and mr_ok and is_safe_time:
+                            target_pos_dict[sym] = lots
+                            if mode == "live":
+                                msg = matrix_long(sym, lots, cp, sig["ma_short"], sig["ma_long"], rsi, adx, equity,
+                                                  float(account.float_profit), daily_pnl, build_positions_detail(pos_dict, quote_dict),
+                                                  tf_str=tf_str, strategy_type=strategy_type)
+                                push(msg.replace("📈 开多", "📈 开多[均值回归(超卖)]"))
+                        elif cp > bb_up and rsi > cfg.get("mr_rsi_short", 70) and cur_pos >= 0 and mr_ok and is_safe_time:
+                            target_pos_dict[sym] = -lots
+                            if mode == "live":
+                                msg = matrix_short(sym, lots, cp, sig["ma_short"], sig["ma_long"], rsi, adx, equity,
+                                                  float(account.float_profit), daily_pnl, build_positions_detail(pos_dict, quote_dict),
+                                                  tf_str=tf_str, strategy_type=strategy_type)
+                                push(msg.replace("📉 开空", "📉 开空[均值回归(超买)]"))
 
                 if mode == "backtest":
                     for sym in symbols_to_trade:
@@ -517,13 +579,13 @@ def run_portfolio(mode="live", tf_str="60m"):
 
     except BacktestFinished:
         log.info("回测完成")
-        print_and_plot_report(equity_curve, cfg, tf_str)
+        print_and_plot_report(equity_curve, cfg, tf_str, strategy_type)
     except KeyboardInterrupt:
         log.info("手动退出")
     except Exception as e:
         log.error(f"异常: {e}", exc_info=True)
         if mode == "live":
-            push(matrix_error(str(e)))
+            push(matrix_error(str(e), tf_str=tf_str, strategy_type=strategy_type))
     finally:
         if executor:
             executor.shutdown(wait=False)
@@ -547,5 +609,6 @@ if __name__ == "__main__":
                 run_portfolio(mode="live", tf_str=tf_str)
             except Exception as e:
                 log.error(f"崩溃，10秒后重启: {e}")
-                push(matrix_error(str(e)))
+                st = "mr" if tf_str in ["5m", "10m", "30m"] else "trend"
+                push(matrix_error(str(e), tf_str=tf_str, strategy_type=st))
                 time_module.sleep(10)
