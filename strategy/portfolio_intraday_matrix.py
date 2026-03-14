@@ -394,11 +394,13 @@ def run_portfolio(mode="live", tf_str="60m"):
                                     "sym": sym, "close": sig["close_price"], "h20": sig["high_20"], "l20": sig["low_20"],
                                     "h10": sig["high_10"], "l10": sig["low_10"], "cur_pos": cur_pos,
                                 })
-                    # K线不足时，至少用首个品种的现价
-                    if close_v == 0 and symbols_to_trade:
+                    # K线不足时，至少用首个品种的现价；live 模式下「价」用实时行情，否则每根K线内不变
+                    if symbols_to_trade:
                         q = quote_dict.get(symbols_to_trade[0])
                         if q:
-                            close_v = float(getattr(q, "last_price", 0) or 0)
+                            live_p = float(getattr(q, "last_price", 0) or 0)
+                            if live_p > 0:
+                                close_v = live_p
                     push(matrix_status(float(account.balance), float(getattr(account, "available", account.balance)),
                          float(getattr(account, "margin", 0)), float(account.float_profit), equity,
                          float(getattr(account, "close_profit", 0) or 0), equity - daily_risk_tracker["daily_start_equity"],

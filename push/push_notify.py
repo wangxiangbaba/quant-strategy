@@ -33,12 +33,18 @@ SYMBOL_CN_NAMES = {
     "FG": "玻璃", "SA": "纯碱", "CF": "棉花", "UR": "尿素",
     "y": "豆油", "p": "棕榈油", "m": "豆粕",
     "hc": "热卷", "ao": "氧化铝", "lc": "碳酸锂",
+    "SR": "白糖", "RM": "菜粕", "OI": "菜油", "TA": "PTA", "MA": "甲醇",
+    "rb": "螺纹", "i": "铁矿石", "j": "焦炭", "jm": "焦煤", "ag": "白银", "au": "黄金",
+    "cu": "沪铜", "al": "沪铝", "zn": "沪锌", "ni": "沪镍", "sn": "沪锡", "pb": "沪铅",
+    "ru": "橡胶", "bu": "沥青", "sp": "纸浆", "ss": "不锈钢", "eb": "苯乙烯", "eg": "乙二醇",
+    "pp": "聚丙烯", "l": "塑料", "v": "PVC", "pg": "液化气", "lh": "生猪", "pk": "花生",
 }
 
 
 def _sym_to_cn(sym: str) -> str:
     s = str(sym).strip()
     product = ""
+    # CZCE.SR605 / DCE.m2505 等：交易所.品种+合约
     m = re.search(r"\.([a-zA-Z]+)\d", s)
     if m:
         product = m.group(1)
@@ -47,7 +53,8 @@ def _sym_to_cn(sym: str) -> str:
         if m:
             product = m.group(1)
         else:
-            m = re.search(r"^([a-zA-Z]{1,3})\d", s)
+            # SR605 / rb2505 等：纯品种+合约
+            m = re.search(r"([a-zA-Z]{1,4})\d{2,4}", s)
             if m:
                 product = m.group(1)
     product = (product or "").lower()
