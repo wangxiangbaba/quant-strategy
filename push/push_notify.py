@@ -128,7 +128,9 @@ def matrix_close(now_str: str, tf_str: str = "", strategy_type: str = "") -> str
     return f"【矩阵策略】休市开始\n{_fmt_strategy_mode(tf_str, strategy_type)}北京时间: {now_str}\n交易时段: {TRADING_HOURS_STR}"
 
 
-def _fmt_positions_detail(positions: list) -> str:
+def _fmt_positions_detail(positions: list, with_plan: bool = False, strategy_type: str = "",
+                          symbol_indicators: dict = None) -> str:
+    """持仓明细。with_plan=True 时每笔持仓下展示止盈止损；symbol_indicators 为 {symbol_key: {close_price,ma_short,...}} 时在每笔持仓后展示该品种指标"""
     if not positions:
         return "无持仓"
     lines = []
@@ -141,7 +143,48 @@ def _fmt_positions_detail(positions: list) -> str:
         last_p = p.get("last_price", 0)
         fp_str = f"+{fp:,.0f}" if fp >= 0 else f"{fp:,.0f}"
         sym_disp = _sym_display(sym)
-        lines.append(f"  {sym_disp} {direction}{lots}手  均价{open_p:.1f}  现价{last_p:.1f}  浮盈{fp_str}")
+        lines.append("--------------------------------------------------------------")
+        lines.append(f"{sym_disp} {direction}{lots}手  均价{open_p:.1f}  现价{last_p:.1f}  浮盈{fp_str}")
+        if with_plan and (p.get("tp_price") is not None or p.get("sl_price") is not None):
+            tp, sl = p.get("tp_price"), p.get("sl_price")
+            if direction == "多":
+                if tp is not None:
+                    lines.append(f"止盈: 价格 >= {tp:.2f} 时平多 (回归中轨)" if strategy_type == "mr" else f"止盈: 价格 <= {tp:.2f} 时平多 (跌破平多价)")
+                if sl is not None:
+                    lines.append(f"止损: 价格 <= {sl:.2f} 时平多")
+            else:
+                if tp is not None:
+                    lines.append(f"止盈: 价格 <= {tp:.2f} 时平空 (回归中轨)" if strategy_type == "mr" else f"止盈: 价格 >= {tp:.2f} 时平空 (突破平空价)")
+                if sl is not None:
+                    lines.append(f"止损: 价格 >= {sl:.2f} 时平空")
+        # 该品种指标嵌入持仓块内
+        if symbol_indicators:
+            ind = symbol_indicators.get(p.get("symbol_key"))
+            if ind:
+                close_p = ind.get("close_price", 0) or ind.get("close", 0)
+                ma_s = ind.get("ma_short", 0)
+                ma_l = ind.get("ma_long", 0)
+                rsi = ind.get("rsi_val", 0)
+                adx = ind.get("adx_approx", 0)
+                ind_sym_disp = _sym_display(p.get("symbol_key", ""))
+                lines.append(f"{ind_sym_disp}: 价{close_p:.1f}  |  MA短{ma_s:.1f}  |  MA长{ma_l:.1f}  |  RSI{rsi:.1f}  |  ADX≈{adx:.1f}")
+    return "\n".join(lines)
+
+
+def _fmt_symbol_indicators(symbol_indicators: list) -> str:
+    """按品种分别展示指标：价、MA短、MA长、RSI、ADX"""
+    if not symbol_indicators:
+        return ""
+    lines = []
+    for item in symbol_indicators:
+        sym = item.get("sym", "")
+        close = item.get("close_price", 0) or item.get("close", 0)
+        ma_s = item.get("ma_short", 0)
+        ma_l = item.get("ma_long", 0)
+        rsi = item.get("rsi_val", 0)
+        adx = item.get("adx_approx", 0)
+        sym_disp = _sym_display(sym)
+        lines.append(f"{sym_disp}: 价{close:.1f}  |  MA短{ma_s:.1f}  |  MA长{ma_l:.1f}  |  RSI{rsi:.1f}  |  ADX≈{adx:.1f}")
     return "\n".join(lines)
 
 
@@ -184,14 +227,35 @@ def matrix_status(balance: float, available: float, margin: float, float_profit:
                   equity: float, close_profit: float, daily_pnl: float, init_equity: float,
                   positions: list, symbols_str: str, total_lots: int,
                   close: float, ma_s: float, ma_l: float, rsi: float, adx: float,
-                  label: str = "5分钟", approach_alerts: list = None, tf_str: str = "", strategy_type: str = "") -> str:
-    pos_detail = _fmt_positions_detail(positions)
+                  label: str = "5分钟", approach_alerts: list = None, tf_str: str = "", strategy_type: str = "",
+                  symbol_indicators: dict = None) -> str:
+    pos_detail = _fmt_positions_detail(positions, with_plan=True, strategy_type=strategy_type,
+                                        symbol_indicators=symbol_indicators)
     daily_str = f"+{daily_pnl:,.0f}" if daily_pnl >= 0 else f"{daily_pnl:,.0f}"
     close_str = f"+{close_profit:,.0f}" if close_profit >= 0 else f"{close_profit:,.0f}"
     total_pnl = equity - init_equity if init_equity > 0 else 0
     total_str = f"+{total_pnl:,.0f}" if total_pnl >= 0 else f"{total_pnl:,.0f}"
     symbols_disp = " ".join(_sym_display(s.strip()) for s in symbols_str.split())
     approach_block = _fmt_approach_alerts(approach_alerts or [])
+    # 无持仓或未传 symbol_indicators 时，底部展示单行指标；有 symbol_indicators 时指标已嵌入各持仓块
+    if not symbol_indicators:
+        indicators_block = f"价: {close:.1f}  |  MA短: {ma_s:.1f}  |  MA长: {ma_l:.1f}  |  RSI: {rsi:.1f}  |  ADX≈{adx:.1f}"
+        return (
+            f"【矩阵策略】账户状态更新（{label}）\n"
+            f"{_fmt_strategy_mode(tf_str, strategy_type)}北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n"
+            f"品种: {symbols_disp}\n"
+            f"─────────────────────\n"
+            f"余额: ¥{balance:,.0f}  |  可用: ¥{available:,.0f}  |  保证金: ¥{margin:,.0f}\n"
+            f"浮盈: ¥{float_profit:,.0f}  |  权益: ¥{equity:,.0f}\n"
+            f"本日: ¥{daily_str}  |  平仓: ¥{close_str}  |  总盈亏: ¥{total_str}\n"
+            f"─────────────────────\n"
+            f"当前持仓: {total_lots} 手  \n"
+            f"以下为全部持仓:\n"
+            f"{pos_detail}\n"
+            f"─────────────────────\n"
+            f"{indicators_block}"
+            f"{approach_block}"
+        )
     return (
         f"【矩阵策略】账户状态更新（{label}）\n"
         f"{_fmt_strategy_mode(tf_str, strategy_type)}北京时间: {_beijing_now()}\n交易时段: {TRADING_HOURS_STR}\n"
@@ -201,9 +265,10 @@ def matrix_status(balance: float, available: float, margin: float, float_profit:
         f"浮盈: ¥{float_profit:,.0f}  |  权益: ¥{equity:,.0f}\n"
         f"本日: ¥{daily_str}  |  平仓: ¥{close_str}  |  总盈亏: ¥{total_str}\n"
         f"─────────────────────\n"
-        f"当前持仓: {total_lots} 手  |  全部持仓: {pos_detail}\n"
-        f"─────────────────────\n"
-        f"价: {close:.1f}  |  MA短: {ma_s:.1f}  |  MA长: {ma_l:.1f}  |  RSI: {rsi:.1f}  |  ADX≈{adx:.1f}"
+        f"当前持仓: {total_lots} 手  \n"
+        f"以下为全部持仓:\n"
+        f"{pos_detail}\n"
+        f"─────────────────────"
         f"{approach_block}"
     )
 
@@ -211,8 +276,9 @@ def matrix_status(balance: float, available: float, margin: float, float_profit:
 def matrix_long(sym: str, lots: int, price: float, ma_s: float, ma_l: float,
                 rsi: float, adx: float, equity: float, float_profit: float,
                 daily_pnl: float, positions: list,
-                h20: float = None, l10: float = None, tf_str: str = "", strategy_type: str = "") -> str:
-    pos_detail = _fmt_positions_detail(positions)
+                h20: float = None, l10: float = None,
+                tf_str: str = "", strategy_type: str = "") -> str:
+    pos_detail = _fmt_positions_detail(positions, with_plan=True, strategy_type=strategy_type)
     daily_str = f"+{daily_pnl:,.0f}" if daily_pnl >= 0 else f"{daily_pnl:,.0f}"
     s = (
         f"【矩阵策略】📈 开多\n"
@@ -232,8 +298,9 @@ def matrix_long(sym: str, lots: int, price: float, ma_s: float, ma_l: float,
 def matrix_short(sym: str, lots: int, price: float, ma_s: float, ma_l: float,
                  rsi: float, adx: float, equity: float, float_profit: float,
                  daily_pnl: float, positions: list,
-                 l20: float = None, h10: float = None, tf_str: str = "", strategy_type: str = "") -> str:
-    pos_detail = _fmt_positions_detail(positions)
+                 l20: float = None, h10: float = None,
+                 tf_str: str = "", strategy_type: str = "") -> str:
+    pos_detail = _fmt_positions_detail(positions, with_plan=True, strategy_type=strategy_type)
     daily_str = f"+{daily_pnl:,.0f}" if daily_pnl >= 0 else f"{daily_pnl:,.0f}"
     s = (
         f"【矩阵策略】📉 开空\n"
@@ -314,6 +381,38 @@ def matrix_symbol_fuse(sym: str, loss_val: float, tf_str: str = "", strategy_typ
         f"合约: {_sym_display(sym)}\n"
         f"今日该品种已亏损: ¥{loss_val:,.0f}\n"
         f"已执行强平，并冻结该品种新开仓权限直至下一交易日。"
+    )
+
+
+def matrix_backtest_report(
+    init_capital: float,
+    final_equity: float,
+    total_ret: float,
+    max_dd: float,
+    sharpe: float,
+    tf_str: str = "",
+    strategy_type: str = "trend",
+    bt_start=None,
+    bt_end=None,
+) -> str:
+    """回测报告推送文本"""
+    engine_name = "均值回归(MR)" if strategy_type == "mr" else "趋势突破(Trend)"
+    period_str = ""
+    if bt_start is not None and bt_end is not None:
+        period_str = f"回测区间:   {bt_start} ~ {bt_end}\n"
+    return (
+        f"【矩阵策略】📊 回测完成\n"
+        f"{_fmt_strategy_mode(tf_str, strategy_type)}"
+        f"10品种矩阵 ({engine_name} | {tf_str}级别)\n"
+        f"─────────────────────\n"
+        f"{period_str}"
+        f"初始资金:   {init_capital:,.0f}\n"
+        f"最终权益:   {final_equity:,.2f}\n"
+        f"总收益率:   {total_ret:.2%}\n"
+        f"最大回撤:   {max_dd:.2%}\n"
+        f"夏普比率:   {sharpe:.2f}\n"
+        f"─────────────────────\n"
+        f"北京时间: {_beijing_now()}"
     )
 
 
